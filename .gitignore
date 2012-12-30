@@ -1,0 +1,15 @@
+# Python byte-code files.
+*.pyc
+
+# Vim temporaries files.
+*.swp
+*.swo
+
+# Text files.
+*.txt
+
+# Sites ids files.
+sites.yml
+
+# Others files.
+test.py

@@ -1,0 +1,37 @@
+main:
+    usage: "{ -f FILE | -l LINK } -d DIR [-c CONF] [-c COOKIE] [-p PARALLEL]"
+
+    options:
+        file:
+            short: -f
+            help: File containing links to download.
+        link:
+            short: -l
+            help: An HTTP link of a file.
+        dest:
+            short: -d
+            help: Directory on which download files.
+            required: True
+        conf:
+            short: -c
+            help: File containing sites ids.
+            default: /etc/pydownloader/sites.yml
+        parallel:
+            short: -p
+            type: int
+            help: Number of parallel downloads.
+            default: 2
+
+    order:
+        - file
+        - link
+        - dest
+        - conf
+        - parallel
+
+    groups:
+        main:
+            required: True
+            options:
+                - file
+                - link

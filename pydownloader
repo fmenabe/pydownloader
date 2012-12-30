@@ -1,0 +1,121 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from pprint import pprint
+import os
+import sys
+import re
+import os.path as path
+import yaml
+import curses
+import time
+import multiprocessing
+import clg
+import ddl
+
+SITE_REGEXP = re.compile('^http://(www[.])?([a-zA-Z]*)[.](net|com|org)/.*$')
+
+OPTIONS_FILE = path.join(path.dirname(__file__), 'options.yml')
+try:
+    OPTIONS = yaml.load(open(OPTIONS_FILE))
+except Exception as err:
+    print("Unable to load command line configuration: %s" % err)
+    sys.exit(1)
+
+
+def terminal_size():
+    rows, columns = os.popen('stty size', 'r').read().split()
+    return (int(rows)-1, int(columns)-1)
+
+
+def mbps(speed):
+    return '%.2fMbps' % (float(speed) / 1024 / 1024)
+
+
+def get_speed(link):
+    diff = link['downloaded'] - link['last_downloaded']
+    return 0 if diff == 0 else diff
+
+
+def get_remaining_time(size, downloaded, speed):
+    remaining_size = size - downloaded
+    speed = speed
+
+
+def main():
+    parser = clg.CommandLine(OPTIONS)
+    parser.parse()
+
+    # Check configuration file exists.
+    if not path.exists(parser.args['conf']):
+        print("Configuration file '%s' not exists!" % parser.args['conf'])
+        sys.exit(1)
+
+    # Get datas from arguments.
+    sites = yaml.load(open(parser.args['conf']))
+
+    if parser.args['file']:
+        if not path.exists(parser.args['file']):
+            print("File '%s' not exists!" % parser.args['file'])
+            sys.exit(1)
+        with open(parser.args['file']) as fhandler:
+            links = [
+                line.strip() for line in fhandler.readlines() if line[0] != '#'
+            ]
+    else:
+        links = [parser.args['link']]
+
+    dst = parser.args['dest']
+    parallel = parser.args['parallel']
+
+    # Start a process for managing downloads
+    manager = ddl.DownloadManager(links, sites, dst, parallel)
+    manager.start()
+
+    # Initialize curse interface.
+    stdscr = curses.initscr()
+    curses.noecho()
+    curses.cbreak()
+
+    try:
+        # Print status of downloads every seconds.
+        while True:
+            rows, columns = terminal_size()
+            for index, link in enumerate(manager.links):
+                stdscr.addstr(index*2, 0, link['url'])
+
+                if link['status'] == 'finished' and 'error' in link:
+                    string = '  %s' % link['error']
+                else:
+                    speed = get_speed(link)
+                    remaining_time = get_remaining_time(
+                        link['filesize'], link['downloaded'], speed
+                    )
+                    string = '  %s %s/%s %s' % (
+                        link['status'],
+                        link['downloaded'],
+                        link['filesize'],
+                        mbps(speed)
+                    )
+
+                stdscr.addstr(index*2+1, 0, string)
+                manager.link(link['url'], 'last_downloaded', link['downloaded'])
+            stdscr.addstr(rows, 0, "Ctrl+C to quit")
+            stdscr.refresh()
+            time.sleep(1)
+    except KeyboardInterrupt:
+        # Kill childs processes.
+        for process in manager.processes:
+            if process.is_alive():
+                process.terminate()
+        manager.terminate()
+
+        # End curse interface.
+        curses.echo()
+        curses.nocbreak()
+        curses.endwin()
+
+
+
+if __name__ == '__main__':
+    main()
