@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+from pprint import pprint
 import os.path as path
 import re
 import multiprocessing
@@ -10,6 +11,7 @@ FILENAME_REGEX = re.compile('.*filename="(.*).*"')
 SITE_REGEXP = re.compile('^http://(www[.])?([a-zA-Z]*)[.](net|com|org)/.*$')
 CHUNK_SIZE = 8192
 
+
 class DownloadError(Exception):
     pass
 
@@ -18,7 +20,8 @@ class DownloadManager(multiprocessing.Process):
     def __init__(self, links, sites, dst, parallel):
         multiprocessing.Process.__init__(self)
         self.manager = multiprocessing.Manager()
-        self.processes = []
+#        self.processes = self.manager.list()
+        self.processes = self.manager.list()
 
         # Init links.
         self.links = self.manager.list()
@@ -32,7 +35,6 @@ class DownloadManager(multiprocessing.Process):
                 'filesize': -1,
                 'downloaded': 0,
                 'last_downloaded': 0,
-                'speed': 0,
             })
 
         # Init sites.
@@ -61,8 +63,8 @@ class DownloadManager(multiprocessing.Process):
 
         site = SITE_REGEXP.search(link).group(2).lower()
         if site not in self.sites:
-            self.link(link, 'status', 'finished')
             self.link(link, 'error', "no ids for site '%s'" % site)
+            self.link(link, 'status', 'failed')
             return
 
         self.link(link, 'status', 'connecting')
@@ -77,24 +79,22 @@ class DownloadManager(multiprocessing.Process):
                     self.sites[site]['login'], self.sites[site]['password']
                 )
             except DownloadError as err:
-                self.link(link, 'status', 'finished')
-                self.link(link, 'error', err)
+                self.link(link, 'status', 'failed')
+                self.link(link, 'error', err.__str__())
                 return
             self.sites[site].setdefault('obj', downloader)
 
         try:
             filelink = downloader.get_link(link)
         except DownloadError as err:
-            self.link(link, 'status', 'finished')
-            self.link(link, 'error', err)
+            self.link(link, 'status', 'failed')
+            self.link(link, 'error', err.__str__())
             return
 
         process = DownloadProcess(
             filelink, link, self, downloader.opener
         )
         process.start()
-
-        self.processes.append(process)
 
 
     def run(self):
@@ -127,6 +127,7 @@ class DownloadProcess(multiprocessing.Process):
 
 
     def run(self):
+        self.manager.processes.append(self.pid)
         response = self.http.open(self.link)
         headers = response.headers
 
@@ -152,3 +153,4 @@ class DownloadProcess(multiprocessing.Process):
                 downloaded = self.manager.downloaded(self.original_link)
                 downloaded += len(chunk)
                 self.manager.link(self.original_link, 'downloaded', downloaded)
+        self.manager.processes.remove(self.pid)
