@@ -171,12 +171,13 @@ def main():
     parser.parse()
 
     # Check configuration file exists.
-    if not path.exists(parser.args['conf']):
+    config_file = path.expanduser(parser.args['conf'])
+    if not path.exists(config_file):
         print("Configuration file '%s' not exists!" % parser.args['conf'])
         sys.exit(1)
 
     # Get datas from arguments.
-    sites = yaml.load(open(parser.args['conf']))
+    sites = yaml.load(open(config_file))
 
     if parser.args['file']:
         if not path.exists(parser.args['file']):

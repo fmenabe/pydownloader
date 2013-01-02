@@ -15,7 +15,7 @@ main:
         conf:
             short: -c
             help: File containing sites ids.
-            default: /etc/pydownloader/sites.yml
+            default: ~/.config/pydownloader/sites.yml
         parallel:
             short: -p
             type: int
