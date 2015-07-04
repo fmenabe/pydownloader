@@ -168,32 +168,32 @@ class Downloader(object):
 
 def main():
     parser = clg.CommandLine(OPTIONS)
-    parser.parse()
+    args = parser.parse()
 
     # Check configuration file exists.
-    config_file = path.expanduser(parser.args['conf'])
+    config_file = path.expanduser(args.conf)
     if not path.exists(config_file):
-        print("Configuration file '%s' not exists!" % parser.args['conf'])
+        print("Configuration file '%s' not exists!" % args.conf)
         sys.exit(1)
 
     # Get datas from arguments.
     sites = yaml.load(open(config_file))
 
-    if parser.args['file']:
-        if not path.exists(parser.args['file']):
-            print("File '%s' not exists!" % parser.args['file'])
+    if args.file:
+        if not path.exists(args.file):
+            print("File '%s' not exists!" % args.file)
             sys.exit(1)
-        with open(parser.args['file']) as fhandler:
+        with open(args.file) as fhandler:
             links = [
                 line.strip() \
                     for line in fhandler.readlines() \
                     if line[0] != '#' and line.strip() != ''
             ]
     else:
-        links = [parser.args['link']]
+        links = [args.link]
 
-    dst = parser.args['dest']
-    parallel = parser.args['parallel']
+    dst = args.dest
+    parallel = args.parallel
 
     # Start a process for managing downloads.
     manager = ddl.DownloadManager(links, sites, dst, parallel)

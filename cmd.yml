@@ -1,0 +1,31 @@
+help: Download links for direct download sites.
+description: Download links for direct download sites.
+
+groups:
+    - title: Options
+      options:
+        conf:
+            short: c
+            help: File containing sites ids.
+            default: ~/.config/pydownloader/sites.yml
+        parallel:
+            short: p
+            type: int
+            help: Number of parallel downloads.
+            default: 2
+
+    - title: Arguments
+      args:
+        dest:
+            help: Directory to store file(s).
+
+    - title: Exclusive options.
+      exclusive_groups:
+        - required: True
+          options:
+            file:
+                short: f
+                help: File containing links to download.
+            link:
+                short: l
+                help: An HTTP link of a file.
