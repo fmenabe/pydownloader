@@ -5,11 +5,5 @@
 *.swp
 *.swo
 
-# Text files.
-*.txt
-
-# Sites ids files.
-sites.yml
-
-# Others files.
-test.py
+# Virtualenvs.
+env/
