@@ -1,219 +1,54 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
+# coding: utf-8
 
-import os.path as path
+import os
 import sys
-import re
-import yaml
-import urwid
-import time
-import multiprocessing
 import clg
-import ddl
+import clg.conf as conf
+import yaml
+import sites
+from lib.ui import UI
+import lib.ui as ui
+from lib.scheduler import Scheduler
 
-SITE_REGEXP = re.compile('^http://(www[.])?([a-zA-Z]*)[.](net|com|org)/.*$')
+import logging
+logger = logging.getLogger('pydownloader')
+logger.setLevel('DEBUG')
+file_handler = logging.FileHandler('/var/log/pydownloader.log')
+file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: l%(lineno)d: %(message)s'))
+file_handler.setLevel('DEBUG')
+logger.addHandler(file_handler)
 
-OPTIONS_FILE = path.join(path.dirname(__file__), 'options.yml')
-try:
-    OPTIONS = yaml.load(open(OPTIONS_FILE))
-except Exception as err:
-    print("Unable to load command line configuration: %s" % err)
-    sys.exit(1)
-
-
-PALETTE = [
-        ('body','black', 'white'),
-        ('footer', 'light gray', 'black'),
-        ('key', 'light cyan', 'black', 'underline'),
-        ('waiting', 'black', 'white'),
-        ('downloading', 'dark blue', 'white'),
-        ('connecting', 'dark blue', 'white'),
-        ('finished', 'dark green', 'white'),
-        ('failed', 'dark red', 'white'),
-]
-
-
-def mb(value):
-    return float(value) / 1024 / 1024
-
-
-class LinkItem(urwid.Pile):
-    def __init__(self, url, status='waiting'):
-        self.url = url
-        self.status = status
-        self.last_download = 0
-        self.url_str = urwid.Text((self.status, self.url))
-        self.status_str = urwid.Text((self.status, status), align='right')
-        self.current_str = urwid.Text((self.status, '-'), align='right')
-        self.speed_str = urwid.Text((self.status, '-'), align='right')
-
-        self.first_line = urwid.Columns([
-            self.url_str,
-            ('fixed', 28, self.current_str),
-        ])
-
-        urwid.Pile.__init__(self, [self.first_line])
-
-
-    def keypress(self, size, key):
-        return key
-
-
-    def set_status(self, status):
-        self.status = status
-        self.url_str.set_text((self.status, self.url))
-        self.status_str.set_text((self.status, status))
-
-
-    def set_progress(self, downloaded, filesize):
-        completed = downloaded * 100 /filesize
-        self.progress_bar.set_completion(completed)
-
-
-    def set_current(self, downloaded, filesize):
-        diff = downloaded - self.last_download
-        self.last_download = downloaded
-        speed_str = '-' if diff == 0 else '%.2f Mb/s' % mb(diff)
-        self.current_str.set_text((
-            self.status,
-            '%.1f/%d Mb (%s)' % (
-                mb(downloaded),
-                round(mb(filesize)),
-                speed_str
-            )
-        ))
-        return diff
-
-
-    def failed(self, msg):
-        urwid.Pile.__init__(
-            self, [self.first_line, urwid.Text((self.status, msg))]
-        )
-
-
-class DownloaderView(urwid.Frame):
-    def __init__(self, manager):
-        self.manager = manager
-
-        self.items = [LinkItem(link['url']) for link in self.manager.links]
-
-        self.listbox = urwid.AttrMap(
-            urwid.ListBox(urwid.SimpleListWalker(self.items)),
-            'body'
-        )
-        self.status_str = urwid.Text("- download(s) at -")
-        self.exit_str = urwid.AttrMap(
-            urwid.Text(
-                ["Press ", ('key', "q"), " or ", ('key', "Q"), " to exit"]
-            ),
-            'footer'
-        )
-        self.footer = urwid.Columns([
-            self.status_str,
-            ('fixed', 20, self.exit_str)
-        ])
-        urwid.Frame.__init__(self, self.listbox, footer=self.footer)
-
-
-    def update(self):
-        diff = 0
-        nb_downloads = 0
-        for index, item in enumerate(self.items):
-            link = self.manager.links[index]
-
-            # Set status and print the message if current download fail.
-            item.set_status(link['status'])
-            if link['status'] == 'failed':
-                item.failed(link['error'])
-                continue
-            elif link['status'] in ('connecting', 'downloading'):
-                nb_downloads += 1
-
-            diff += item.set_current(link['downloaded'], link['filesize'])
-
-        self.status_str.set_text(
-            "%s download(s) at %.2f Mb/s" % (nb_downloads, mb(diff))
-        )
-
-
-class Downloader(object):
-    def __init__(self, manager):
-        self.manager = manager
-        self.loop_handler = None
-        self.view = DownloaderView(manager)
-
-
-    def _keyevent(self, input):
-        if input in ('q', 'Q'):
-            # Remove loop.
-            if self.loop_handler:
-                self.main_loop.remove_alarm(self.loop_handler)
-
-            # Exit urwid.
-            raise urwid.ExitMainLoop()
-
-
-    def loop(self, loop=None, user_data=None):
-        self.view.update()
-        self.loop_handler = self.main_loop.set_alarm_in(1, self.loop)
-
-
-    def main(self):
-        self.main_loop = urwid.MainLoop(
-            self.view, PALETTE, unhandled_input=self._keyevent
-        )
-        self.loop(self)
-        self.main_loop.run()
-
+VERSION = 'pydownloader 1.0.0'
+clg.TYPES['version'] = VERSION
 
 def main():
-    parser = clg.CommandLine(OPTIONS)
-    args = parser.parse()
+    args = clg.init()
+    conf.init(args)
 
-    # Check configuration file exists.
-    config_file = path.expanduser(args.conf)
-    if not path.exists(config_file):
-        print("Configuration file '%s' not exists!" % args.conf)
-        sys.exit(1)
+    # Make sure destination directory exists.
+    create_dir(args.dir)
 
-    # Get datas from arguments.
-    sites = yaml.load(open(config_file))
+    # Launch the process scheduler.
+    scheduler = Scheduler(
+        load_links(args.file) if args.file else [args.link], args.dir, args.parallel)
+    scheduler.start()
 
-    if args.file:
-        if not path.exists(args.file):
-            print("File '%s' not exists!" % args.file)
-            sys.exit(1)
-        with open(args.file) as fhandler:
-            links = [
-                line.strip() \
-                    for line in fhandler.readlines() \
-                    if line[0] != '#' and line.strip() != ''
-            ]
-    else:
-        links = [args.link]
+    # Start UI.
+    UI(scheduler, VERSION).run()
 
-    dst = args.dest
-    parallel = args.parallel
+def load_links(path):
+    if not os.path.exists(path):
+        sys.exit("ERROR: links file '%s' does not exist" % path)
+    with open(path) as fhandler:
+        return [line for line in fhandler.read().splitlines() if line and line[0] != '#']
 
-    # Start a process for managing downloads.
-    manager = ddl.DownloadManager(links, sites, dst, parallel)
-    manager.start()
-
-    # Start interface.
-    Downloader(manager).main()
-
-    # Kill all process (ugly!?).
-    import os
-    processes = manager.processes
-    processes.append(manager.pid)
-    processes.append(manager.manager._process.pid)
-    for pid in sorted(processes):
+def create_dir(path):
+    if not os.path.exists(path):
         try:
-            os.kill(pid, 9)
-        except IOError:
-            pass
-    os._exit(0)
-
+            os.makedirs(path)
+        except OSError as err:
+            sys.exit("ERROR: unable to create destination directory '%s': %s" % (path, err))
 
 if __name__ == '__main__':
     main()
