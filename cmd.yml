@@ -1,31 +1,44 @@
-help: Download links for direct download sites.
-description: Download links for direct download sites.
+help: Download links from direct download sites.
+description: Download links from direct download sites.
+add_help: false
+print_help: true
 
 groups:
     - title: Options
       options:
-        conf:
+        help:
+            short: h
+            action: help
+            default: __SUPPRESS__
+            help: Show this help message and exit.
+        version:
+            short: v
+            action: version
+            version: __VERSION__
+        conf_file:
             short: c
-            help: File containing sites ids.
+            metavar: PATH
             default: ~/.config/pydownloader/sites.yml
+            help: 'File containing sites ids (default: __DEFAULT__).'
         parallel:
             short: p
             type: int
-            help: Number of parallel downloads.
-            default: 2
+            default: 1
+            help: 'Number of parallel downloads (default: 1).'
 
-    - title: Arguments
-      args:
-        dest:
-            help: Directory to store file(s).
-
-    - title: Exclusive options.
+    - title: Source options
       exclusive_groups:
         - required: True
           options:
             file:
                 short: f
+                metavar: PATH
                 help: File containing links to download.
             link:
                 short: l
                 help: An HTTP link of a file.
+
+    - title: Arguments
+      args:
+        dir:
+            help: Directory where to download file(s).
