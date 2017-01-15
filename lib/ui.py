@@ -12,11 +12,12 @@ PALETTE = [
     ('header',       '', '', '', 'h0',   'h245'),
     ('panel',        '', '', '', 'h1',   ''),
     ('starting',     '', '', '', 'h0',   'h15'),
-    ('initializing', '', '', '', 'h243', 'h15'),
+    ('connecting',   '', '', '', 'h243', 'h15'),
+    ('initializing', '', '', '', 'h238', 'h15'),
     ('waiting',      '', '', '', 'h17',  'h15'),
-    ('downloading',  '', '', '', 'h94', 'h15'),
+    ('downloading',  '', '', '', 'h94',  'h15'),
     ('finished',     '', '', '', 'h29',  'h15'),
-    ('failed',       '', '', '', 'h88',   'h15'),
+    ('failed',       '', '', '', 'h88',  'h15'),
     ('keys',         '', '', '', 'h0',   'h7')]
 
 
@@ -83,15 +84,15 @@ class UI:
         elif key == 'enter':
             line, idx = self.links.get_focus()
             link = line.link
-            link.show_url = not link.show_url
+            link.show_infos = not link.show_infos
             link.set_text(link.text)
         elif key in ('s', 'S'):
             for line in self.links:
-                line.link.show_url = True
+                line.link.show_infos = True
                 line.link.refresh()
         elif key in ('h', 'H'):
             for line in self.links:
-                line.link.show_url = False
+                line.link.show_infos = False
                 line.link.refresh()
 
     def run(self):
@@ -127,6 +128,7 @@ class Links(urwid.ListBox):
         """Let the UI manage Up and Down keys."""
         return key
 
+
 class Line(urwid.AttrMap):
     def __init__(self, shared_link):
         self.shared_link = shared_link
@@ -140,7 +142,7 @@ class Line(urwid.AttrMap):
         self.link.refresh()
 
        # Refresh status.
-        if self.shared_link.msg:
+        if self.shared_link.msg and self.shared_link.status != 'failed':
             status_text = self.shared_link.msg
         elif self.shared_link.status == 'downloading':
             downloaded = (self.shared_link.downloaded or 0) / 1024 / 1024
@@ -155,10 +157,11 @@ class Line(urwid.AttrMap):
             status_text = self.shared_link.status
         self.status.set_text((self.shared_link.status, status_text))
 
+
 class Link(urwid.Text):
     _selectable = True
     focus = False
-    show_url = False
+    show_infos = False
 
     def __init__(self, shared_link):
         self.shared_link = shared_link
@@ -166,14 +169,20 @@ class Link(urwid.Text):
 
     @property
     def text(self):
-        # Prevent errors when showing real link before the link was initialized.
-        if self.shared_link.status == 'initializing':
-            self.show_url = False
-        return ('%s\n └─%s' % (self.shared_link.url, self.shared_link.real_url)
-                if self.show_url and self.shared_link.real_url
-                else '+%s' % self.shared_link.url
-                      if self.shared_link.real_url
-                      else self.shared_link.url)
+        # Prevent errors when showing real link before the provider was initialized.
+        if self.shared_link.status == 'connecting':
+            self.show_infos = False
+        text = ('+%s' % self.shared_link.url
+                if self.shared_link.real_url and not self.show_infos
+                else self.shared_link.url)
+        if self.show_infos:
+            text += ('\n └─%s' % self.shared_link.real_url
+                     if self.shared_link.real_url
+                     else '')
+            text += ('\n%s' % self.shared_link.msg
+                     if self.shared_link.status == 'failed'
+                     else '')
+        return text
 
     def refresh(self):
         self.set_text(self.text)

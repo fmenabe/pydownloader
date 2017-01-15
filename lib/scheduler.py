@@ -8,6 +8,7 @@ import time
 import clg.conf
 import threading
 import multiprocessing
+from addict import Dict
 
 import logging
 logger = logging.getLogger('pydownloader')
@@ -19,10 +20,29 @@ SHARED_ATTRS = ['status', 'msg', 'provider', 'pid', 'real_url',
 
 CHUNK_SIZE = 4096
 
+def trying(max_try=5, wait=1):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            nb_try = 1
+            error = None
+            while True:
+                if nb_try > max_try:
+                    raise DownloadError(error)
+
+                try:
+                    kwargs['cur_try'] = nb_try
+                    return func(*args, **kwargs)
+                except (IOError, DownloadError) as err:
+                    nb_try += 1
+                    error = err
+                    time.sleep(wait)
+        return wrapper
+    return decorator
+
+
 class DownloadError(Exception):
     pass
 
-from addict import Dict
 
 class SharedLink:
     def __init__(self, link, shared_links):
@@ -105,10 +125,8 @@ class Scheduler(multiprocessing.Process):
                 provider_name,
                 *imp.find_module(
                     provider_name, [os.path.join(sys.path[0], 'lib', 'sites')]))
-            logger.debug('initializing link')
-            # provider.init is a generator that yield message of current action.
-            for msg in provider.init():
-                shared_link.msg = msg
+
+            provider.init(shared_link)
             self.providers.setdefault(provider_name, provider)
         else:
             provider = self.providers[provider_name]
@@ -117,13 +135,13 @@ class Scheduler(multiprocessing.Process):
     def run(self):
         # Initialize links' providers (only once by provider) and start download
         # process. Download process retrieve the real link and wait for the order
-        # to start download (ie: wait for the status to 'downloading'.
+        # to start download (ie: wait for the status to 'downloading').
         for link in self.shared_links:
             if link.status == 'failed':
                 continue
 
             shared_link = SharedLink(link.url, self.shared_links)
-            shared_link.status = 'initializing'
+            shared_link.status = 'connecting'
             time.sleep(0.1)
             try:
                 provider = self.get_provider(shared_link)
@@ -163,7 +181,6 @@ class Scheduler(multiprocessing.Process):
         for shared_link in self.shared_links:
             if shared_link.pid:
                 try:
-                    logger.debug('killing pid: %s' % shared_link.pid)
                     os.kill(shared_link.pid, 15)
                 except OSError:
                     pass
@@ -183,60 +200,44 @@ class Download(multiprocessing.Process):
 
     def run(self):
         self.shared_link.pid = self.pid
-        logger.debug('(%s) pid: %s' % (self.shared_link.url, self.pid))
 
         if self.shared_link.status == 'failed':
             return
 
         try:
-            for msg in self.provider.get_link(self.shared_link.url):
-                self.shared_link.msg = msg
+            # Get real url and file informations.
+            self.shared_link.status = 'initializing'
+            self.provider.get_link(self.shared_link)
+            self.get_file_info()
+            self.shared_link.status = 'waiting'
+            del(self.shared_link.msg)
+
+            # Wait for receiving the order to download the link.
+            while self.shared_link.status == 'waiting':
+                time.sleep(1)
+                continue
+
+            # Download link.
+            self.download()
+            self.shared_link.status = 'finished'
         except DownloadError as err:
             self.shared_link.status = 'failed'
             self.shared_link.msg = str(err)
-        except GeneratorExit as value:
-            logger.debug('real url: %s' % value)
-            self.shared_link.real_url = value
 
-        self.shared_link.status = 'waiting'
-        del(self.shared_link.msg)
-
-        # Wait for receiving the order to download the link.
-        while self.shared_link.status == 'waiting':
-            time.sleep(1)
-            continue
-
-        # Download file.
-        nb_try = 1
-        error = None
-        while True:
-            if nb_try > self.max_try:
-                self.shared_link.status = 'failed'
-                self.shared_link.msg = 'unable to download: %s' % error
-                return
-
-            self.shared_link.msg = 'initializing download (%s)' % nb_try
-            try:
-                self.download()
-                self.shared_link.downloaded = self.shared_link.filesize
-                break
-            except IOError as err:
-                error = err
-                nb_try += 1
-                time.sleep(self.wait)
-
-        self.shared_link.status = 'finished'
-
-    def download(self, max_try=5, wait=1):
+    @trying(max_try=5, wait=1)
+    def get_file_info(self, cur_try):
         # Get filename and filesize.
-        logger.debug('(%s) downloading' % self.shared_link.real_url)
-        response = self.provider.session.get(self.shared_link.real_url, stream=True)
+        self.shared_link.msg = 'retrieving informations (%d)' % cur_try
+        response = self.provider.session.get(
+            self.shared_link.real_url, stream=True, timeout=5)
         self.shared_link.filesize = int(response.headers['content-length'].strip())
         filename = (
             _FILENAME_RE.search(response.headers['content-disposition'].strip()).group(1))
         self.shared_link.filepath = os.path.join(self.dest, filename)
         response.close()
 
+    @trying(max_try=5, wait=1)
+    def download(self, cur_try):
         # Check if file already exists and generate header for resuming download.
         if os.path.exists(self.shared_link.filepath):
             mode = 'ab'
@@ -249,8 +250,7 @@ class Download(multiprocessing.Process):
 
         # Get file.
         response = self.provider.session.get(
-            self.shared_link.real_url, headers=headers, stream=True, timeout=30)
-        logger.debug(response.headers)
+            self.shared_link.real_url, headers=headers, stream=True, timeout=10)
         speed_thread = DownloadSpeed(self.shared_link)
         speed_thread.start()
         del(self.shared_link.msg)
